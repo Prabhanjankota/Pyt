@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import Project, Task, Comment, ActivityLog
+from .models import Project, Task, Comment, ActivityLog, Feed
 from django.contrib.auth import get_user_model
 
 User = get_user_model()
@@ -128,6 +128,22 @@ class CommentSerializer(serializers.ModelSerializer):
             }
         )
         
+        # Create feed item
+        from .feed_utils import create_feed_item
+        create_feed_item(
+            actor=comment.author,
+            activity_type='COMMENT_ADDED',
+            title=f'commented on "{comment.task.title}"',
+            description=comment.content[:200],
+            task=comment.task,
+            project=comment.task.project,
+            comment=comment,
+            organization=comment.task.project.organization,
+            metadata={
+                'comment_preview': comment.content[:100],
+            }
+        )
+        
         return comment
 
 
@@ -151,3 +167,53 @@ class ActivityLogSerializer(serializers.ModelSerializer):
     def get_actor_name(self, obj):
         """Get actor's full name"""
         return obj.actor.get_full_name() if obj.actor else 'System'
+    
+class FeedSerializer(serializers.ModelSerializer):
+    """Serializer for Feed model with optimized queries"""
+    
+    actor_email = serializers.EmailField(source='actor.email', read_only=True)
+    actor_name = serializers.SerializerMethodField()
+    task_title = serializers.CharField(source='task.title', read_only=True)
+    project_name = serializers.CharField(source='project.name', read_only=True)
+    organization_name = serializers.CharField(source='organization.name', read_only=True)
+    time_ago = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = Feed
+        fields = [
+            'id', 'actor', 'actor_email', 'actor_name', 'activity_type',
+            'title', 'description', 'task', 'task_title', 'project', 
+            'project_name', 'comment', 'organization', 'organization_name',
+            'metadata', 'created_at', 'time_ago'
+        ]
+        read_only_fields = '__all__'
+    
+    def get_actor_name(self, obj):
+        """Get actor's full name"""
+        return obj.actor.get_full_name()
+    
+    def get_time_ago(self, obj):
+        """Get human-readable time ago"""
+        from django.utils import timezone
+        from datetime import timedelta
+        
+        now = timezone.now()
+        diff = now - obj.created_at
+        
+        if diff < timedelta(minutes=1):
+            return "just now"
+        elif diff < timedelta(hours=1):
+            mins = int(diff.total_seconds() / 60)
+            return f"{mins} minute{'s' if mins != 1 else ''} ago"
+        elif diff < timedelta(days=1):
+            hours = int(diff.total_seconds() / 3600)
+            return f"{hours} hour{'s' if hours != 1 else ''} ago"
+        elif diff < timedelta(days=7):
+            days = diff.days
+            return f"{days} day{'s' if days != 1 else ''} ago"
+        elif diff < timedelta(days=30):
+            weeks = diff.days // 7
+            return f"{weeks} week{'s' if weeks != 1 else ''} ago"
+        else:
+            months = diff.days // 30
+            return f"{months} month{'s' if months != 1 else ''} ago"

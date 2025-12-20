@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import Project, Task, Comment, ActivityLog
+from .models import Project, Task, Comment, ActivityLog, Feed
 
 
 @admin.register(Project)
@@ -79,4 +79,18 @@ class ActivityLogAdmin(admin.ModelAdmin):
     
     def has_delete_permission(self, request, obj=None):
         """Don't allow deletion of logs"""
+        return False
+@admin.register(Feed)
+class FeedAdmin(admin.ModelAdmin):
+    """Admin interface for feed"""
+    
+    list_display = ['id', 'actor', 'activity_type', 'title', 'organization', 'created_at']
+    list_filter = ['activity_type', 'organization', 'created_at']
+    search_fields = ['title', 'description', 'actor__email']
+    date_hierarchy = 'created_at'
+    readonly_fields = ['actor', 'activity_type', 'title', 'description', 'task', 
+                       'project', 'comment', 'organization', 'metadata', 'created_at']
+    
+    def has_add_permission(self, request):
+        """Don't allow manual creation"""
         return False

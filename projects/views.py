@@ -3,14 +3,20 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from django.shortcuts import get_object_or_404
-from .models import Project, Task, Comment, ActivityLog
+from .models import Project, Task, Comment, ActivityLog, Feed
 from .serializers import (
     ProjectSerializer, TaskSerializer, TaskStatusUpdateSerializer,
-    CommentSerializer, ActivityLogSerializer
+    CommentSerializer, ActivityLogSerializer, FeedSerializer
 )
+from rest_framework.pagination import PageNumberPagination
 from .permissions import CanManageProject, CanManageTask
 from organizations.models import Membership
 
+class FeedPagination(PageNumberPagination):
+    """Custom pagination for feed"""
+    page_size = 20
+    page_size_query_param = 'page_size'
+    max_page_size = 100
 
 class ProjectViewSet(viewsets.ModelViewSet):
     """
@@ -196,4 +202,88 @@ class ActivityLogViewSet(viewsets.ReadOnlyModelViewSet):
         """Get current user's activity"""
         activities = self.get_queryset().filter(actor=request.user)
         serializer = self.get_serializer(activities, many=True)
+        return Response(serializer.data)
+class FeedViewSet(viewsets.ReadOnlyModelViewSet):
+    """
+    ViewSet for Feed (read-only, paginated timeline)
+    """
+    serializer_class = FeedSerializer
+    permission_classes = [IsAuthenticated]
+    pagination_class = FeedPagination
+    
+    def get_queryset(self):
+        """
+        Return feed items for user's organizations
+        Optimized with select_related and prefetch_related
+        """
+        user = self.request.user
+        
+        if user.is_superuser:
+            queryset = Feed.objects.all()
+        else:
+            user_orgs = Membership.objects.filter(user=user).values_list('organization', flat=True)
+            queryset = Feed.objects.filter(organization__in=user_orgs)
+        
+        # Optimize queries - load related objects in one query
+        queryset = queryset.select_related(
+            'actor',
+            'task',
+            'project',
+            'comment',
+            'organization'
+        )
+        
+        return queryset
+    
+    @action(detail=False, methods=['get'])
+    def my_feed(self, request):
+        """Get feed items for current user's activity"""
+        queryset = self.get_queryset().filter(actor=request.user)
+        page = self.paginate_queryset(queryset)
+        
+        if page is not None:
+            serializer = self.get_serializer(page, many=True)
+            return self.get_paginated_response(serializer.data)
+        
+        serializer = self.get_serializer(queryset, many=True)
+        return Response(serializer.data)
+    
+    @action(detail=False, methods=['get'])
+    def project_feed(self, request):
+        """Get feed items for a specific project"""
+        project_id = request.query_params.get('project_id')
+        if not project_id:
+            return Response(
+                {'error': 'project_id parameter is required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        queryset = self.get_queryset().filter(project_id=project_id)
+        page = self.paginate_queryset(queryset)
+        
+        if page is not None:
+            serializer = self.get_serializer(page, many=True)
+            return self.get_paginated_response(serializer.data)
+        
+        serializer = self.get_serializer(queryset, many=True)
+        return Response(serializer.data)
+    
+    @action(detail=False, methods=['get'])
+    def organization_feed(self, request):
+        """Get feed items for a specific organization"""
+        org_id = request.query_params.get('org_id')
+        if not org_id:
+            return Response(
+                {'error': 'org_id parameter is required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        queryset = self.get_queryset().filter(organization_id=org_id)
+        page = self.paginate_queryset(queryset)
+        
+        if page is not None:
+            serializer = self.get_serializer(page, many=True)
+            return self.get_paginated_response(serializer.data)
+        
+        serializer = self.get_serializer(queryset, many=True)
         return Response(serializer.data)

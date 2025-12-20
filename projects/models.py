@@ -100,23 +100,22 @@ class Task(models.Model):
         }
         return new_status in valid_transitions.get(self.status, [])
     def save(self, *args, **kwargs):
-        """Override save to create activity logs"""
-        # Check if this is an update (has primary key)
+        """Override save to create activity logs and feed items"""
         is_update = self.pk is not None
         old_status = None
         
         if is_update:
-            # Get old values before saving
             try:
                 old_task = Task.objects.get(pk=self.pk)
                 old_status = old_task.status
             except Task.DoesNotExist:
                 pass
         
-        # Save the task
         super().save(*args, **kwargs)
         
-        # Create activity log
+        # Import here to avoid circular imports
+        from .feed_utils import create_feed_item
+        
         if not is_update:
             # New task created
             ActivityLog.objects.create(
@@ -131,10 +130,26 @@ class Task(models.Model):
                     'priority': self.priority,
                 }
             )
+            
+            # Create feed item
+            create_feed_item(
+                actor=self.reporter,
+                activity_type='TASK_CREATED',
+                title=f'created task "{self.title}"',
+                description=f'Created a new task in project {self.project.name}',
+                task=self,
+                project=self.project,
+                organization=self.project.organization,
+                metadata={
+                    'priority': self.priority,
+                    'status': self.status,
+                }
+            )
+            
         elif old_status and old_status != self.status:
             # Status changed
             ActivityLog.objects.create(
-                actor=None,  # Will be set by the view
+                actor=None,
                 action='STATUS_CHANGED',
                 description=f'Changed status from {old_status} to {self.status}',
                 task=self,
@@ -143,7 +158,7 @@ class Task(models.Model):
                     'old_status': old_status,
                     'new_status': self.status,
                 }
-            )
+            )   
 class Comment(models.Model):
     """Comment model - discussions on tasks"""
     
@@ -245,3 +260,76 @@ class ActivityLog(models.Model):
     
     def __str__(self):
         return f"{self.actor.email if self.actor else 'System'} - {self.action} at {self.created_at}"
+    
+
+class Feed(models.Model):
+    """Feed model - aggregated activity stream for social timeline"""
+    
+    ACTIVITY_TYPE_CHOICES = [
+        ('TASK_CREATED', 'Task Created'),
+        ('TASK_UPDATED', 'Task Updated'),
+        ('STATUS_CHANGED', 'Status Changed'),
+        ('COMMENT_ADDED', 'Comment Added'),
+        ('TASK_ASSIGNED', 'Task Assigned'),
+        ('PROJECT_CREATED', 'Project Created'),
+        ('USER_MENTIONED', 'User Mentioned'),
+    ]
+    
+    # Actor (who did the action)
+    actor = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name='feed_activities'
+    )
+    
+    # Activity type
+    activity_type = models.CharField(max_length=50, choices=ACTIVITY_TYPE_CHOICES)
+    
+    # Target objects (what was acted upon)
+    task = models.ForeignKey(
+        Task,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name='feed_items'
+    )
+    project = models.ForeignKey(
+        Project,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name='feed_items'
+    )
+    comment = models.ForeignKey(
+        Comment,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name='feed_items'
+    )
+    
+    # Organization for scoping
+    organization = models.ForeignKey(
+        Organization,
+        on_delete=models.CASCADE,
+        related_name='feed_items'
+    )
+    
+    # Feed content
+    title = models.CharField(max_length=255)
+    description = models.TextField(blank=True)
+    metadata = models.JSONField(default=dict, blank=True)
+    
+    created_at = models.DateTimeField(auto_now_add=True)
+    
+    class Meta:
+        db_table = 'feeds'
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['-created_at']),
+            models.Index(fields=['organization', '-created_at']),
+            models.Index(fields=['actor', '-created_at']),
+        ]
+    
+    def __str__(self):
+        return f"{self.actor.email} - {self.activity_type} at {self.created_at}"

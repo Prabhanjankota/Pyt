@@ -99,3 +99,149 @@ class Task(models.Model):
             'DONE': ['IN_PROGRESS'],
         }
         return new_status in valid_transitions.get(self.status, [])
+    def save(self, *args, **kwargs):
+        """Override save to create activity logs"""
+        # Check if this is an update (has primary key)
+        is_update = self.pk is not None
+        old_status = None
+        
+        if is_update:
+            # Get old values before saving
+            try:
+                old_task = Task.objects.get(pk=self.pk)
+                old_status = old_task.status
+            except Task.DoesNotExist:
+                pass
+        
+        # Save the task
+        super().save(*args, **kwargs)
+        
+        # Create activity log
+        if not is_update:
+            # New task created
+            ActivityLog.objects.create(
+                actor=self.reporter,
+                action='TASK_CREATED',
+                description=f'Created task "{self.title}"',
+                task=self,
+                project=self.project,
+                metadata={
+                    'task_id': self.id,
+                    'task_title': self.title,
+                    'priority': self.priority,
+                }
+            )
+        elif old_status and old_status != self.status:
+            # Status changed
+            ActivityLog.objects.create(
+                actor=None,  # Will be set by the view
+                action='STATUS_CHANGED',
+                description=f'Changed status from {old_status} to {self.status}',
+                task=self,
+                project=self.project,
+                metadata={
+                    'old_status': old_status,
+                    'new_status': self.status,
+                }
+            )
+class Comment(models.Model):
+    """Comment model - discussions on tasks"""
+    
+    task = models.ForeignKey(
+        Task,
+        on_delete=models.CASCADE,
+        related_name='comments'
+    )
+    author = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name='comments'
+    )
+    content = models.TextField()
+    mentioned_users = models.ManyToManyField(
+        User,
+        related_name='mentions',
+        blank=True
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        db_table = 'comments'
+        ordering = ['created_at']
+    
+    def __str__(self):
+        return f"Comment by {self.author.email} on {self.task.title}"
+    
+    def extract_mentions(self):
+        """Extract @mentions from comment content"""
+        import re
+        # Find all @email patterns
+        pattern = r'@(\S+@\S+\.\S+)'
+        emails = re.findall(pattern, self.content)
+        return emails
+    
+    def save(self, *args, **kwargs):
+        """Override save to process mentions"""
+        super().save(*args, **kwargs)
+        
+        # Extract and link mentioned users
+        mentioned_emails = self.extract_mentions()
+        if mentioned_emails:
+            mentioned_users = User.objects.filter(email__in=mentioned_emails)
+            self.mentioned_users.set(mentioned_users)
+
+
+class ActivityLog(models.Model):
+    """Activity log - audit trail of all actions"""
+    
+    ACTION_CHOICES = [
+        ('TASK_CREATED', 'Task Created'),
+        ('TASK_UPDATED', 'Task Updated'),
+        ('STATUS_CHANGED', 'Status Changed'),
+        ('COMMENT_ADDED', 'Comment Added'),
+        ('TASK_ASSIGNED', 'Task Assigned'),
+        ('PROJECT_CREATED', 'Project Created'),
+    ]
+    
+    actor = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        related_name='activities'
+    )
+    action = models.CharField(max_length=50, choices=ACTION_CHOICES)
+    description = models.TextField()
+    
+    # Generic relation fields (can point to any model)
+    task = models.ForeignKey(
+        Task,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name='activities'
+    )
+    project = models.ForeignKey(
+        Project,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name='activities'
+    )
+    comment = models.ForeignKey(
+        Comment,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name='activities'
+    )
+    
+    metadata = models.JSONField(default=dict, blank=True)  # Store additional data
+    created_at = models.DateTimeField(auto_now_add=True)
+    
+    class Meta:
+        db_table = 'activity_logs'
+        ordering = ['-created_at']
+    
+    def __str__(self):
+        return f"{self.actor.email if self.actor else 'System'} - {self.action} at {self.created_at}"

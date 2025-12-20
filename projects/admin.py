@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import Project, Task
+from .models import Project, Task, Comment, ActivityLog
 
 
 @admin.register(Project)
@@ -41,3 +41,42 @@ class TaskAdmin(admin.ModelAdmin):
             'fields': ('status', 'priority', 'due_date')
         }),
     )
+
+
+@admin.register(Comment)
+class CommentAdmin(admin.ModelAdmin):
+    """Admin interface for comments"""
+    
+    list_display = ['id', 'author', 'task', 'content_preview', 'created_at']
+    list_filter = ['created_at', 'author']
+    search_fields = ['content', 'author__email', 'task__title']
+    date_hierarchy = 'created_at'
+    
+    def content_preview(self, obj):
+        """Show first 50 characters of comment"""
+        return obj.content[:50] + '...' if len(obj.content) > 50 else obj.content
+    content_preview.short_description = 'Content'
+
+
+@admin.register(ActivityLog)
+class ActivityLogAdmin(admin.ModelAdmin):
+    """Admin interface for activity logs"""
+    
+    list_display = ['id', 'actor', 'action', 'description_preview', 'created_at']
+    list_filter = ['action', 'created_at']
+    search_fields = ['description', 'actor__email']
+    date_hierarchy = 'created_at'
+    readonly_fields = ['actor', 'action', 'description', 'task', 'project', 'comment', 'metadata', 'created_at']
+    
+    def description_preview(self, obj):
+        """Show first 50 characters of description"""
+        return obj.description[:50] + '...' if len(obj.description) > 50 else obj.description
+    description_preview.short_description = 'Description'
+    
+    def has_add_permission(self, request):
+        """Don't allow manual creation of logs"""
+        return False
+    
+    def has_delete_permission(self, request, obj=None):
+        """Don't allow deletion of logs"""
+        return False

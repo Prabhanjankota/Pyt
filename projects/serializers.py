@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import Project, Task
+from .models import Project, Task, Comment, ActivityLog
 from django.contrib.auth import get_user_model
 
 User = get_user_model()
@@ -68,6 +68,7 @@ class TaskSerializer(serializers.ModelSerializer):
         validated_data['reporter'] = self.context['request'].user
         return super().create(validated_data)
 
+
 class TaskStatusUpdateSerializer(serializers.Serializer):
     """Serializer for updating task status with validation"""
     
@@ -79,6 +80,74 @@ class TaskStatusUpdateSerializer(serializers.Serializer):
         if not task.can_transition_to(value):
             raise serializers.ValidationError(
                 f"Cannot transition from {task.status} to {value}. "
-                f"Valid transitions: {', '.join(task.can_transition_to.__code__.co_consts[1].get(task.status, []))}"
+                f"Valid transitions from {task.status}: TODO→IN_PROGRESS, IN_PROGRESS→TODO/DONE, DONE→IN_PROGRESS"
             )
         return value
+
+
+class CommentSerializer(serializers.ModelSerializer):
+    """Serializer for Comment model"""
+    
+    author_email = serializers.EmailField(source='author.email', read_only=True)
+    author_name = serializers.SerializerMethodField()
+    task_title = serializers.CharField(source='task.title', read_only=True)
+    mentioned_users_emails = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = Comment
+        fields = [
+            'id', 'task', 'task_title', 'author', 'author_email', 'author_name',
+            'content', 'mentioned_users_emails', 'created_at', 'updated_at'
+        ]
+        read_only_fields = ['id', 'author', 'created_at', 'updated_at']
+    
+    def get_author_name(self, obj):
+        """Get author's full name"""
+        return obj.author.get_full_name()
+    
+    def get_mentioned_users_emails(self, obj):
+        """Get list of mentioned user emails"""
+        return list(obj.mentioned_users.values_list('email', flat=True))
+    
+    def create(self, validated_data):
+        """Set author to current user and process mentions"""
+        validated_data['author'] = self.context['request'].user
+        comment = super().create(validated_data)
+        
+        # Create activity log
+        ActivityLog.objects.create(
+            actor=comment.author,
+            action='COMMENT_ADDED',
+            description=f'Added comment on task "{comment.task.title}"',
+            task=comment.task,
+            project=comment.task.project,
+            comment=comment,
+            metadata={
+                'comment_id': comment.id,
+                'content_preview': comment.content[:100],
+            }
+        )
+        
+        return comment
+
+
+class ActivityLogSerializer(serializers.ModelSerializer):
+    """Serializer for Activity Log"""
+    
+    actor_email = serializers.EmailField(source='actor.email', read_only=True)
+    actor_name = serializers.SerializerMethodField()
+    task_title = serializers.CharField(source='task.title', read_only=True)
+    project_name = serializers.CharField(source='project.name', read_only=True)
+    
+    class Meta:
+        model = ActivityLog
+        fields = [
+            'id', 'actor', 'actor_email', 'actor_name', 'action', 'description',
+            'task', 'task_title', 'project', 'project_name', 'comment',
+            'metadata', 'created_at'
+        ]
+        read_only_fields = '__all__'
+    
+    def get_actor_name(self, obj):
+        """Get actor's full name"""
+        return obj.actor.get_full_name() if obj.actor else 'System'

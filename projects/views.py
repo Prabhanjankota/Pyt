@@ -11,6 +11,10 @@ from .serializers import (
 from rest_framework.pagination import PageNumberPagination
 from .permissions import CanManageProject, CanManageTask
 from organizations.models import Membership
+from django.core.cache import cache
+from django.views.decorators.cache import cache_page
+from django.utils.decorators import method_decorator
+from core.throttling import CommentRateThrottle
 
 class FeedPagination(PageNumberPagination):
     """Custom pagination for feed"""
@@ -126,6 +130,7 @@ class CommentViewSet(viewsets.ModelViewSet):
     """
     serializer_class = CommentSerializer
     permission_classes = [IsAuthenticated]
+    throttle_classes = [CommentRateThrottle]    
     
     def get_queryset(self):
         """Return comments for tasks in user's organizations"""
@@ -218,6 +223,14 @@ class FeedViewSet(viewsets.ReadOnlyModelViewSet):
         """
         user = self.request.user
         
+        # Create cache key based on user and organizations
+        cache_key = f'feed_queryset_user_{user.id}'
+        
+        # Try to get from cache
+        cached_queryset = cache.get(cache_key)
+        if cached_queryset is not None:
+            return cached_queryset
+        
         if user.is_superuser:
             queryset = Feed.objects.all()
         else:
@@ -233,19 +246,50 @@ class FeedViewSet(viewsets.ReadOnlyModelViewSet):
             'organization'
         )
         
+        # Cache for 5 minutes
+        cache.set(cache_key, queryset, 300)
+        
         return queryset
+    
+    def list(self, request, *args, **kwargs):
+        """Override list to add caching"""
+        # Cache key includes page number
+        page = request.query_params.get('page', 1)
+        cache_key = f'feed_list_user_{request.user.id}_page_{page}'
+        
+        # Try cache first
+        cached_response = cache.get(cache_key)
+        if cached_response is not None:
+            return Response(cached_response)
+        
+        # If not cached, get data normally
+        response = super().list(request, *args, **kwargs)
+        
+        # Cache the response for 5 minutes
+        cache.set(cache_key, response.data, 300)
+        
+        return response
     
     @action(detail=False, methods=['get'])
     def my_feed(self, request):
         """Get feed items for current user's activity"""
+        cache_key = f'my_feed_user_{request.user.id}'
+        
+        cached_data = cache.get(cache_key)
+        if cached_data is not None:
+            return Response(cached_data)
+        
         queryset = self.get_queryset().filter(actor=request.user)
         page = self.paginate_queryset(queryset)
         
         if page is not None:
             serializer = self.get_serializer(page, many=True)
-            return self.get_paginated_response(serializer.data)
+            result = self.get_paginated_response(serializer.data)
+            cache.set(cache_key, result.data, 300)
+            return result
         
         serializer = self.get_serializer(queryset, many=True)
+        cache.set(cache_key, serializer.data, 300)
         return Response(serializer.data)
     
     @action(detail=False, methods=['get'])
@@ -258,14 +302,23 @@ class FeedViewSet(viewsets.ReadOnlyModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
         
+        cache_key = f'project_feed_{project_id}_user_{request.user.id}'
+        
+        cached_data = cache.get(cache_key)
+        if cached_data is not None:
+            return Response(cached_data)
+        
         queryset = self.get_queryset().filter(project_id=project_id)
         page = self.paginate_queryset(queryset)
         
         if page is not None:
             serializer = self.get_serializer(page, many=True)
-            return self.get_paginated_response(serializer.data)
+            result = self.get_paginated_response(serializer.data)
+            cache.set(cache_key, result.data, 600)
+            return result
         
         serializer = self.get_serializer(queryset, many=True)
+        cache.set(cache_key, serializer.data, 600)
         return Response(serializer.data)
     
     @action(detail=False, methods=['get'])
@@ -278,12 +331,21 @@ class FeedViewSet(viewsets.ReadOnlyModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
         
+        cache_key = f'org_feed_{org_id}_user_{request.user.id}'
+        
+        cached_data = cache.get(cache_key)
+        if cached_data is not None:
+            return Response(cached_data)
+        
         queryset = self.get_queryset().filter(organization_id=org_id)
         page = self.paginate_queryset(queryset)
         
         if page is not None:
             serializer = self.get_serializer(page, many=True)
-            return self.get_paginated_response(serializer.data)
+            result = self.get_paginated_response(serializer.data)
+            cache.set(cache_key, result.data, 600)
+            return result
         
         serializer = self.get_serializer(queryset, many=True)
+        cache.set(cache_key, serializer.data, 600)
         return Response(serializer.data)

@@ -64,9 +64,16 @@ class TaskSerializer(serializers.ModelSerializer):
         return attrs
     
     def create(self, validated_data):
-        """Set reporter to current user"""
+        """Set reporter to current user and send notification"""
         validated_data['reporter'] = self.context['request'].user
-        return super().create(validated_data)
+        task = super().create(validated_data)
+        
+        # Send async email notification if task is assigned
+        if task.assignee:
+            from .tasks import send_task_assignment_email
+            send_task_assignment_email.delay(task.id, task.assignee.id)
+        
+        return task
 
 
 class TaskStatusUpdateSerializer(serializers.Serializer):
@@ -143,6 +150,12 @@ class CommentSerializer(serializers.ModelSerializer):
                 'comment_preview': comment.content[:100],
             }
         )
+        
+        # Send mention notifications asynchronously
+        mentioned_user_ids = list(comment.mentioned_users.values_list('id', flat=True))
+        if mentioned_user_ids:
+            from .tasks import send_comment_notification
+            send_comment_notification.delay(comment.id, mentioned_user_ids)
         
         return comment
 

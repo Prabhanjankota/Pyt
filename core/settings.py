@@ -45,8 +45,12 @@ INSTALLED_APPS = [
     'django.contrib.messages',
     'django.contrib.staticfiles',
 
+    # Third-party apps
     'rest_framework',
+    'django_celery_beat',        # Add this
+    'django_celery_results',     # Add this
 
+    # Your apps
     'users',
     'organizations',
     'projects',
@@ -212,3 +216,30 @@ try:
     print("✅ Redis connection successful!")
 except Exception as e:
     print(f"❌ Redis connection failed: {e}")
+
+
+# Celery Configuration
+CELERY_BROKER_URL = 'amqp://guest:guest@localhost:5672//'  # RabbitMQ
+CELERY_RESULT_BACKEND = 'django-db'  # Store results in database
+CELERY_CACHE_BACKEND = 'default'  # Use Redis for caching
+
+# Celery Task Settings
+CELERY_ACCEPT_CONTENT = ['json']
+CELERY_TASK_SERIALIZER = 'json'
+CELERY_RESULT_SERIALIZER = 'json'
+CELERY_TIMEZONE = 'UTC'
+CELERY_TASK_TRACK_STARTED = True
+CELERY_TASK_TIME_LIMIT = 30 * 60  # 30 minutes
+CELERY_TASK_SOFT_TIME_LIMIT = 25 * 60  # 25 minutes
+
+# Email Configuration (for sending notifications)
+EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'  # For testing - prints to console
+# For production, use SMTP:
+# EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
+# EMAIL_HOST = 'smtp.gmail.com'
+# EMAIL_PORT = 587
+# EMAIL_USE_TLS = True
+# EMAIL_HOST_USER = 'your-email@gmail.com'
+# EMAIL_HOST_PASSWORD = 'your-app-password'
+
+DEFAULT_FROM_EMAIL = 'noreply@projectmanagement.com'

@@ -70,6 +70,8 @@ class TaskViewSet(viewsets.ModelViewSet):
         user_orgs = Membership.objects.filter(user=user).values_list('organization', flat=True)
         return Task.objects.filter(project__organization__in=user_orgs)
     
+    from .websocket_utils import broadcast_task_update, send_notification_to_user
+
     @action(detail=True, methods=['post'])
     def update_status(self, request, pk=None):
         """Update task status with validation"""
@@ -85,7 +87,7 @@ class TaskViewSet(viewsets.ModelViewSet):
             task.status = serializer.validated_data['status']
             task.save()
             
-            # Create activity log with correct actor
+            # Create activity log
             ActivityLog.objects.create(
                 actor=request.user,
                 action='STATUS_CHANGED',
@@ -98,11 +100,36 @@ class TaskViewSet(viewsets.ModelViewSet):
                 }
             )
             
+            # Broadcast status change via WebSocket
+            broadcast_task_update(
+                task.id,
+                'status_changed',
+                {
+                    'task_id': task.id,
+                    'old_status': old_status,
+                    'new_status': task.status,
+                    'changed_by': request.user.email,
+                }
+            )
+            
+            # Notify assignee if different from actor
+            if task.assignee and task.assignee != request.user:
+                send_notification_to_user(
+                    task.assignee.id,
+                    'task_status_changed',
+                    {
+                        'task_id': task.id,
+                        'task_title': task.title,
+                        'old_status': old_status,
+                        'new_status': task.status,
+                        'changed_by': request.user.email,
+                    }
+                )
+            
             return Response({
                 'message': 'Status updated successfully',
                 'task': TaskSerializer(task).data
             })
-        
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
     
     @action(detail=False, methods=['get'])

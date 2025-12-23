@@ -5,7 +5,7 @@ from django.core.cache import cache
 def create_feed_item(actor, activity_type, title, description='', 
                      task=None, project=None, comment=None, organization=None, metadata=None):
     """
-    Helper function to create feed items and invalidate related caches
+    Helper function to create feed items and broadcast to WebSocket
     """
     if not organization:
         if task:
@@ -30,6 +30,22 @@ def create_feed_item(actor, activity_type, title, description='',
     
     # Invalidate related caches
     invalidate_feed_caches(actor, organization, project)
+    
+    # Broadcast to WebSocket
+    from .websocket_utils import broadcast_feed_update
+    broadcast_feed_update(
+        organization.id,
+        {
+            'id': feed_item.id,
+            'actor': actor.email,
+            'activity_type': activity_type,
+            'title': title,
+            'description': description,
+            'task_id': task.id if task else None,
+            'project_id': project.id if project else None,
+            'created_at': feed_item.created_at.isoformat(),
+        }
+    )
     
     return feed_item
 

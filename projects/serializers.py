@@ -157,6 +157,34 @@ class CommentSerializer(serializers.ModelSerializer):
             from .tasks import send_comment_notification
             send_comment_notification.delay(comment.id, mentioned_user_ids)
         
+        # Broadcast comment via WebSocket
+        from .websocket_utils import broadcast_task_update, send_notification_to_user
+        broadcast_task_update(
+            comment.task.id,
+            'comment_added',
+            {
+                'comment_id': comment.id,
+                'task_id': comment.task.id,
+                'author': comment.author.email,
+                'content': comment.content,
+                'created_at': comment.created_at.isoformat(),
+            }
+        )
+        
+        # Notify mentioned users in real-time
+        for user_id in mentioned_user_ids:
+            send_notification_to_user(
+                user_id,
+                'mentioned_in_comment',
+                {
+                    'comment_id': comment.id,
+                    'task_id': comment.task.id,
+                    'task_title': comment.task.title,
+                    'author': comment.author.email,
+                    'content_preview': comment.content[:100],
+                }
+            )
+        
         return comment
 
 

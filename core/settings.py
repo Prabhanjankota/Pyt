@@ -38,6 +38,8 @@ ALLOWED_HOSTS = []
 # Application definition
 
 INSTALLED_APPS = [
+    'daphne',  # Add this at the TOP (important!)
+    
     'django.contrib.admin',
     'django.contrib.auth',
     'django.contrib.contenttypes',
@@ -47,8 +49,9 @@ INSTALLED_APPS = [
 
     # Third-party apps
     'rest_framework',
-    'django_celery_beat',        # Add this
-    'django_celery_results',     # Add this
+    'django_celery_beat',
+    'django_celery_results',
+    'channels',  # Add this
 
     # Your apps
     'users',
@@ -243,3 +246,15 @@ EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'  # For testing 
 # EMAIL_HOST_PASSWORD = 'your-app-password'
 
 DEFAULT_FROM_EMAIL = 'noreply@projectmanagement.com'
+
+# Channels Configuration
+ASGI_APPLICATION = 'core.asgi.application'
+
+CHANNEL_LAYERS = {
+    'default': {
+        'BACKEND': 'channels_redis.core.RedisChannelLayer',
+        'CONFIG': {
+            "hosts": [('127.0.0.1', 6379)],
+        },
+    },
+}
